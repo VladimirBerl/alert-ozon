@@ -69,7 +69,7 @@ export const setupWarehousesFavorite = (bot: Telegraf) => {
     if (!storage.hasIn((el) => el.id === id)) return await ctx.answerCbQuery('❌ Склад не найден');
     const monitor = MonitoringService.getInstance(bot, ctx.from?.id);
     monitor.addMonitoring((el) => el.id === id, storage.read().find((w) => w.id === id)!);
-    const state = monitor.start(60_000);
+    const state = monitor.start(60_000 * 10);
     await ctx.answerCbQuery('✅ Мониторинг запущен');
   });
 

@@ -30,7 +30,7 @@ export const setupMain = (bot: Telegraf) => {
 
   bot.action('root_start_monitoring', async (ctx) => {
     const monitor = MonitoringService.getInstance(bot, ctx.from?.id);
-    const state = monitor.start(60_000);
+    const state = monitor.start(60_000 * 10);
 
     if (state) {
       await ctx.answerCbQuery('✅ Мониторинг запущен');
