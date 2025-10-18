@@ -1,0 +1,15 @@
+version: '3.9'
+
+services:
+  node-bot:
+    build: .
+    container_name: ALERT_OZON
+    restart: always
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      BOT_TOKEN: ${BOT_TOKEN}
+      OZON_CLIENT_ID: ${OZON_CLIENT_ID}
+      OZON_API_KEY: ${OZON_API_KEY}
+      API_URL: ${API_URL}
