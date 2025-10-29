@@ -1,54 +1,89 @@
 import { Context, Telegraf } from 'telegraf';
 import api from '~/api/api.js';
-import JsonStorage from '~/utils/jsonStorage.js';
+import { Cluster, Warehouse, WarehouseSearchItem } from '~/api/types/index.js';
+import singletonMonitoring from '~/storage/draft-create.js';
+import pagination from '~/utils/pagination.js';
+import { translateWarehouseFBOType, translateWarehouseType } from '~/utils/translate-warehouse.js';
 
-const PAGE_SIZE = 5;
+const renderClustersList = async (ctx: Context, page = 1) => {
+  const clusters = await api.clustersList();
+  if (!clusters.length) return ctx.answerCbQuery('❌ Ошибка загрузки складов');
 
-const storage = new JsonStorage<{ id: string; name: string; capacities?: number }>('warehouses.json');
-const pendingCapacities = new Map<number, { id: string; name: string }>();
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
 
-const renderWarehousesList = async (ctx: Context, page = 1) => {
-  await ctx.answerCbQuery();
-
-  const warehouses = await api.getAvailableWarehouses();
-  if (!warehouses?.length) return ctx.answerCbQuery('❌ Ошибка загрузки складов');
-
-  const start = (page - 1) * PAGE_SIZE;
-  const pageItems = warehouses.slice(start, start + PAGE_SIZE);
-
-  const inline_keyboard = pageItems.map((w) => [
-    { text: `${w.warehouse.name} (${w.warehouse.id})`, callback_data: `warehouse_detail:${w.warehouse.id}` },
-  ]);
-
-  const navRow: any[] = [];
-  if (page > 1) navRow.push({ text: '⬅️ Назад', callback_data: `warehouses_page:${page - 1}` });
-  if (start + PAGE_SIZE < warehouses.length)
-    navRow.push({ text: '➡️ Вперёд', callback_data: `warehouses_page:${page + 1}` });
-  if (navRow.length) inline_keyboard.push(navRow);
-  inline_keyboard.push([{ text: '🔙 В меню', callback_data: 'main_menu' }]);
-
-  await ctx.editMessageText(`🏭 Список складов (стр. ${page}):`, { reply_markup: { inline_keyboard } });
+  await pagination<Cluster>({
+    ctx,
+    items: clusters,
+    itemsRender: (c) => ({
+      text: `${c.name} | кол-во складов: ${c.logistic_clusters.length}`,
+      callback_data: `warehouses_page:${c.id}`,
+    }),
+    callback_data: 'clusters_page',
+    title: '🏭 Список кластеров',
+    page,
+  });
 };
 
-const renderWarehouseDetail = async (ctx: Context, warehouseId: string) => {
-  await ctx.answerCbQuery();
+const renderWarehousesList = async (ctx: Context, clusterID: string, page = 1) => {
+  const clusters = await api.clustersList();
+  const cluster = clusters.find((c) => c.id === parseFloat(clusterID));
+  if (!cluster || cluster.logistic_clusters.length === 0) return ctx.answerCbQuery('❌ Кластер не найден');
 
-  const warehouses = await api.getAvailableWarehouses();
-  const warehouse = warehouses.find((w) => w.warehouse.id === warehouseId);
-  if (!warehouse) return ctx.answerCbQuery('❌ Склад не найден');
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
 
-  const { name, id } = warehouse.warehouse;
+  const warehouses = cluster.logistic_clusters
+    .map((l) => l.warehouses)
+    .flat()
+    .filter((w) => w.type === 'CROSS_DOCK');
 
-  const capacitiesText = warehouse.schedule.capacity
-    .map(
-      (c) =>
-        `📅 ${new Date(c.start).toLocaleDateString()}–${new Date(
-          c.end
-        ).toLocaleDateString()}: <b>${c.value.toLocaleString()}</b>`
-    )
-    .join('\n');
+  await pagination<Warehouse>({
+    ctx,
+    items: warehouses,
+    itemsRender: (w) => ({
+      text: `${w.name} | Тип: ${translateWarehouseType(w.type)}`,
+      callback_data: `warehouse_detail:${clusterID}:${w.warehouse_id}`,
+    }),
+    callback_data: `warehouses_page:${clusterID}`,
+    title: '🏭 Список складов кластера',
+    page,
+  });
+};
 
-  const text = `🏭 <b>${name}</b>\n🆔 ID: <code>${id}</code>\n\n📦 Доступная вместимость:\n${capacitiesText}`;
+const renderWarehouseFBOList = async (ctx: Context, clusterID: number, warehouseID: number, page = 1) => {
+  const warehouses = await api.warehousesFBOList(String(warehouseID));
+  if (!warehouses.length) return ctx.answerCbQuery('❌ Ошибка загрузки складов');
+
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
+
+  await pagination<WarehouseSearchItem>({
+    ctx,
+    items: warehouses,
+    itemsRender: (w) => ({
+      text: `${w.name} | Тип: ${translateWarehouseFBOType(w.warehouse_type)}`,
+      callback_data: `warehouses_detail:${clusterID}:${w.warehouse_id}`,
+    }),
+    callback_data: `warehouse_detail:${clusterID}:${warehouseID}`,
+    title: '🏭 Список точек отгрузки поставки',
+    page,
+  });
+};
+
+const renderWarehouseFBODetail = async (ctx: Context, clusterID: number, warehouseID: number) => {
+  const warehouses = await api.warehousesFBOList(String(warehouseID));
+  const warehouse = warehouses.find((w) => w.warehouse_id === warehouseID);
+  if (!warehouse) return ctx.answerCbQuery('❌ Ошибка загрузки склада');
+
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
+
+  const text = `🏭 <b>${warehouse.name}</b>\n🆔 ID: <code>${warehouse.warehouse_id}</code>\n📍 Адрес: <code>${warehouse.address}</code>`;
 
   await ctx.editMessageText(text, {
     parse_mode: 'HTML',
@@ -56,57 +91,50 @@ const renderWarehouseDetail = async (ctx: Context, warehouseId: string) => {
       inline_keyboard: [
         [
           {
-            text: '❤️ Избранное',
-            callback_data: `toggle_favorite:${id}`,
+            text: '❤️ Выбрать склад и принадлежащий ему кластер',
+            callback_data: `select_warehouse:${clusterID}:${warehouse.warehouse_id}`,
           },
         ],
-        [{ text: '🔙 Назад', callback_data: 'warehouses_page:1' }],
+        [{ text: '🔙 Назад', callback_data: `warehouse_detail:${clusterID}:${warehouse.warehouse_id}` }],
       ],
     },
   });
 };
 
-const handleAddFavorite = async (ctx: Context, warehouseId: string) => {
-  const warehouses = await api.getAvailableWarehouses();
-  const w = warehouses.find((w) => w.warehouse.id === warehouseId);
-  if (!w) return ctx.reply('❌ Склад не найден');
-
-  const data = { id: w.warehouse.id, name: w.warehouse.name };
-
-  if (storage.hasIn((el) => el.id === data.id)) {
-    storage.removeIn((el) => el.id === data.id);
-    await ctx.reply('❌ Убран из избранных');
-  } else {
-    await ctx.reply(`Введите значение вместимости для мониторинга склада ${data.name}:`);
-    pendingCapacities.set(ctx.from!.id, data);
-  }
-
-  await ctx.answerCbQuery();
-};
-
 export const setupWarehousesList = (bot: Telegraf) => {
-  bot.action('warehouses_list', (ctx) => renderWarehousesList(ctx, 1));
-  bot.action(/^warehouses_page:(\d+)$/, (ctx) => renderWarehousesList(ctx, Number(ctx.match[1])));
-  bot.action(/^warehouse_detail:(.+)$/, (ctx) => renderWarehouseDetail(ctx, ctx.match[1]));
-  bot.action(/^toggle_favorite:(.+)$/, (ctx) => handleAddFavorite(ctx, ctx.match[1]));
+  bot.action('clusters_list', (ctx) => renderClustersList(ctx, 1));
+  bot.action(/^clusters_page:(\d+)$/, (ctx) => renderClustersList(ctx, Number(ctx.match[1])));
 
-  bot.on('message', async (ctx, next) => {
-    const id = ctx.from?.id;
-    const pending = pendingCapacities.get(id);
-    if (!('text' in ctx.message) || !pending) {
-      pendingCapacities.delete(id);
-      return next();
+  bot.action(/^warehouses_page:(\d+)(?::(\d+))?$/, (ctx) => {
+    const clusterID = ctx.match[1];
+    const page = ctx.match[2] ? parseInt(ctx.match[2]) : 1;
+    renderWarehousesList(ctx, clusterID, page);
+  });
+
+  bot.action(/^warehouse_detail:(\d+):(\d+)(?::(\d+))?$/, (ctx) => {
+    const clusterID = Number(ctx.match[1]);
+    const warehouseID = Number(ctx.match[2]);
+    const page = ctx.match[3] ? parseInt(ctx.match[3]) : 1;
+    renderWarehouseFBOList(ctx, clusterID, warehouseID, page);
+  });
+
+  bot.action(/^warehouses_detail:(\d+):(\d+)$/, (ctx) => {
+    const clusterID = Number(ctx.match[1]);
+    const warehouseID = Number(ctx.match[2]);
+    renderWarehouseFBODetail(ctx, clusterID, warehouseID);
+  });
+
+  bot.action(/^select_warehouse:(\d+):(\d+)$/, (ctx) => {
+    const clusterID = Number(ctx.match[1]);
+    const warehouseID = Number(ctx.match[2]);
+    const storage = singletonMonitoring.getStorage();
+    storage.set('drop_off_point_warehouse_id', warehouseID);
+    storage.set('cluster_ids', [String(clusterID)]);
+    ctx.answerCbQuery('✅ Склад и кластер выбраны');
+
+    if (storage.read().status) {
+      singletonMonitoring.stopMonitoring();
+      ctx.reply('⚠️ Мониторинг был остановлен из-за изменения данных');
     }
-
-    const capacities = Number(ctx.message.text.trim());
-    if (isNaN(capacities) || capacities <= 0) {
-      return ctx.reply('❌ Введите корректное число вместимости');
-    }
-
-    storage.add({ ...pending, capacities });
-    await ctx.reply(`✅ Добавлен в избранные с вместимостью <b>${capacities}</b>`, {
-      parse_mode: 'HTML',
-    });
-    pendingCapacities.delete(id);
   });
 };

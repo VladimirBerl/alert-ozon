@@ -1,0 +1,10 @@
+{
+  "status": false,
+  "draft_id": null,
+  "date_from": null,
+  "date_to": null,
+  "cluster_ids": null,
+  "drop_off_point_warehouse_id": null,
+  "items": [],
+  "type": "CREATE_TYPE_CROSSDOCK"
+}

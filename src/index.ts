@@ -3,7 +3,8 @@ import { BOT_TOKEN } from './const.js';
 import { setupMain } from './commands/index.js';
 
 if (!BOT_TOKEN) throw new Error('BOT_TOKEN is missing in environment');
-const bot = new Telegraf(BOT_TOKEN);
+
+export const bot = new Telegraf(BOT_TOKEN);
 
 setupMain(bot);
 
