@@ -53,6 +53,26 @@ const api = {
       return [];
     }
   },
+  draftFullfillmentWarehouseInfo: async (cluster_id: number) => {
+    try {
+      return await apiInstance
+        .post<ClustersList>('/v1/cluster/list', {
+          cluster_ids: [cluster_id],
+          cluster_type: 'CLUSTER_TYPE_OZON',
+          caches: false,
+        })
+        .then((res) =>
+          res.data.clusters
+            .find((c) => c.id === Number(cluster_id))
+            ?.logistic_clusters.flatMap((l) => l.warehouses)
+            .filter((w) => w.type === 'FULL_FILLMENT')
+            .map((w) => w.warehouse_id)
+        );
+    } catch (error) {
+      handleAxiosError(error, 'searchClusters');
+      return [];
+    }
+  },
   warehousesFBOList: async (search: string) => {
     try {
       return await apiInstance
@@ -177,7 +197,7 @@ const api = {
 
         console.log(`🔁 Попытка ${attempt}: статус = ${createDraftInfo.status}`);
 
-        if (createDraftInfo.status !== 'CALCULATION_STATUS_PENDING') {
+        if (createDraftInfo.status == 'CALCULATION_STATUS_SUCCESS') {
           console.log(`✅ Расчёт завершён: ${createDraftInfo.status}`);
           return createDraftInfo;
         }

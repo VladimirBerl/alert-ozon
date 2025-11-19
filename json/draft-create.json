@@ -1,10 +1,18 @@
 {
   "status": false,
-  "draft_id": null,
-  "date_from": null,
-  "date_to": null,
-  "cluster_ids": null,
-  "drop_off_point_warehouse_id": null,
-  "items": [],
+  "draft_id": 75385077,
+  "date_from": "20:00",
+  "date_to": "21:00",
+  "cluster_ids": [
+    "16"
+  ],
+  "drop_off_point_warehouse_id": 1020000160743000,
+  "drop_off_point_cluster_id": 2,
+  "items": [
+    {
+      "sku": 1855239904,
+      "quantity": 5
+    }
+  ],
   "type": "CREATE_TYPE_CROSSDOCK"
 }

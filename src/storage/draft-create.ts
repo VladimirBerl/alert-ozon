@@ -1,7 +1,8 @@
 import api from '~/api/api.js';
 import { AdminNotifier } from '~/utils/admin-notifier.js';
-import { getTimeForTimeslot } from '~/utils/getTimeForTimeslot.js';
+import { extractTime, getTimeForTimeslotUTC } from '~/utils/getTimeForTimeslot.js';
 import JsonStorage from '~/utils/jsonStorage.js';
+import { sleep } from '~/utils/util.js';
 
 const notifier = new AdminNotifier();
 
@@ -12,6 +13,7 @@ interface draftCreateStorage {
   date_to?: string | null;
   cluster_ids?: string | null;
   drop_off_point_warehouse_id?: number | null;
+  drop_off_point_cluster_id?: number | null;
   items:
     | {
         quantity: number;
@@ -52,6 +54,7 @@ export class Monitoring {
       date_to: null,
       cluster_ids: null,
       drop_off_point_warehouse_id: null,
+      drop_off_point_cluster_id: null,
       items: [],
       type: 'CREATE_TYPE_CROSSDOCK',
     });
@@ -69,27 +72,38 @@ export class Monitoring {
   }
 
   public async getCurrentMonitoringState(): Promise<ValidationResult> {
-    const { cluster_ids, items, date_from, date_to, drop_off_point_warehouse_id } = this.storage.read();
+    const { cluster_ids, items, date_from, date_to, drop_off_point_warehouse_id, drop_off_point_cluster_id } =
+      this.storage.read();
     const errors: string[] = [];
 
     if (!cluster_ids) errors.push('❌ Не выбран кластер');
     if (!drop_off_point_warehouse_id) errors.push('❌ Не выбран склад');
     if (!date_from || !date_to) errors.push('❌ Не выбран временной интервал');
     if (!items.length) errors.push('❌ Не добавлены товары');
+    if (!drop_off_point_cluster_id) errors.push('❌ Не выбран кластер для кроссдок склада');
 
     if (errors.length) return { valid: false, errors };
 
     try {
       const cluster = await api
-        .searchClusters([String(cluster_ids)])
+        .clustersList()
         .then((clusters) => clusters.find((c) => c.id === Number(cluster_ids)));
 
       if (!cluster) {
-        errors.push('❌ Не удалось найти кластер. Выберите его заново.');
+        errors.push('❌ Не удалось найти кластер приема товара. Выберите его заново.');
         return { valid: false, errors };
       }
 
-      const warehouse = cluster.logistic_clusters
+      const clusterCross = await api
+        .searchClusters([String(drop_off_point_cluster_id)])
+        .then((clusters) => clusters.find((c) => c.id === Number(drop_off_point_cluster_id)));
+
+      if (!clusterCross) {
+        errors.push('❌ Не удалось найти кластер кроссдок склада. Выберите его заново.');
+        return { valid: false, errors };
+      }
+
+      const warehouse = clusterCross.logistic_clusters
         .flatMap((l) => l.warehouses)
         .find((w) => w.warehouse_id === drop_off_point_warehouse_id);
 
@@ -158,11 +172,11 @@ export class Monitoring {
   private async startIntervalDraft() {
     if (this.intervalDraft) clearInterval(this.intervalDraft);
 
-    await this.createDraft();
+    // await this.createDraft();
 
-    this.intervalDraft = setInterval(async () => {
-      await this.createDraft();
-    }, 60_000 * 25);
+    // this.intervalDraft = setInterval(async () => {
+    //   await this.createDraft();
+    // }, 60_000 * 25);
   }
 
   private async createDraft() {
@@ -181,7 +195,7 @@ export class Monitoring {
       if (!draft) return;
 
       this.storage.set('draft_id', draft.draft_id);
-      console.log(`✅ Черновик создан: ${draft.draft_id}`);
+      console.log(`✅ Черновик создан: ${JSON.stringify(draft, null, 2)}}`);
     } catch (error) {
       console.error('❌ Ошибка при создании черновика:', error);
     }
@@ -189,38 +203,82 @@ export class Monitoring {
 
   private startIntervalTimeslot() {
     if (this.intervalTimeslot) clearInterval(this.intervalTimeslot);
+    console.log('Подготовка к запуску тайм-слот мониторинга');
 
     this.intervalTimeslot = setInterval(async () => {
       try {
-        const { draft_id, date_from, date_to, drop_off_point_warehouse_id, status } = this.storage.read();
-        if (!status) return;
-        if (!draft_id || !date_from || !date_to || !drop_off_point_warehouse_id) return;
+        const { draft_id, date_from, date_to, drop_off_point_warehouse_id, cluster_ids, status } =
+          this.storage.read();
+
+        if (!draft_id || !date_from || !date_to || !drop_off_point_warehouse_id || !status || !cluster_ids) {
+          return console.log(
+            `⚠️ Не удалось получить данные для проверки тайм-слота: ${JSON.stringify(
+              this.storage.read(),
+              null,
+              2
+            )}}`
+          );
+        }
 
         console.log('⏰ Проверка таймслотов...');
 
-        const { dateFrom, dateTo } = getTimeForTimeslot(date_from, date_to);
-        const info = await api.draftTimeslotInfo(dateFrom, dateTo, Number(draft_id), [
-          String(drop_off_point_warehouse_id),
-        ]);
+        const fullFillmentWarehousesID = await api.draftFullfillmentWarehouseInfo(Number(cluster_ids));
+        if (!fullFillmentWarehousesID) return console.log('⚠️ Доступных складов нет');
 
-        const timeslot = info?.drop_off_warehouse_timeslots?.[0]?.days?.[0]?.timeslots?.[0];
-        if (!timeslot) {
-          console.log('⚠️ Доступных таймслотов нет');
-          return;
+        const { dateFromUTC, dateToUTC } = getTimeForTimeslotUTC(date_from, date_to);
+
+        const targetFromTime = extractTime(dateFromUTC);
+        const targetToTime = extractTime(dateToUTC);
+
+        let matched = null;
+        let correctWarehouseId = null;
+
+        for (const warehouseId of fullFillmentWarehousesID) {
+          const info = await api.draftTimeslotInfo(dateFromUTC, dateToUTC, Number(draft_id), [
+            String(warehouseId),
+          ]);
+
+          const found = info?.drop_off_warehouse_timeslots
+            .flatMap((w) => w.days?.flatMap((d) => d.timeslots) || [])
+            .find(
+              (slot) =>
+                extractTime(slot.from_in_timezone) === targetFromTime &&
+                extractTime(slot.to_in_timezone) === targetToTime
+            );
+
+          if (found) {
+            matched = found;
+            correctWarehouseId = warehouseId;
+            break;
+          }
+
+          await sleep(2000);
+        }
+
+        if (!matched) {
+          return console.log('⚠️ Доступных таймслотов нет');
         }
 
         const result = await api.draftSupplyCreate(
           Number(draft_id),
-          timeslot,
-          Number(drop_off_point_warehouse_id)
+          {
+            from_in_timezone: matched.from_in_timezone,
+            to_in_timezone: matched.to_in_timezone,
+          },
+          Number(correctWarehouseId)
         );
+
         if (!result) return;
+
         this.stopMonitoring();
-        await notifier.notifyDraftCreated(result.operation_id, Number(draft_id), timeslot);
+        await notifier.notifyDraftCreated(result.operation_id, Number(draft_id), {
+          from_in_timezone: matched.from_in_timezone,
+          to_in_timezone: matched.to_in_timezone,
+        });
       } catch (error) {
         console.error('❌ Ошибка при проверке таймслота:', error);
       }
-    }, 10_000);
+    }, 30_000);
   }
 
   private validateStorageBeforeStart(): { valid: boolean; errors?: string[] } {
