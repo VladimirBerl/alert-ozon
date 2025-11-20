@@ -164,13 +164,24 @@ export class Monitoring {
   }
 
   public stopMonitoring() {
-    if (this.intervalDraft) clearInterval(this.intervalDraft);
-    if (this.intervalTimeslot) clearInterval(this.intervalTimeslot);
+    if (this.intervalDraft) {
+      clearInterval(this.intervalDraft);
+      this.intervalDraft = null;
+    }
+    if (this.intervalTimeslot) {
+      clearInterval(this.intervalTimeslot);
+      this.intervalTimeslot = null;
+    }
     this.storage.write({ ...this.storage.read(), status: false });
   }
 
   private async startIntervalDraft() {
-    if (this.intervalDraft) clearInterval(this.intervalDraft);
+    if (this.intervalDraft) {
+      clearInterval(this.intervalDraft);
+      this.intervalDraft = null;
+    }
+
+    console.log('🟢 Интервал Draft запущен');
 
     await this.createDraft();
 
@@ -202,8 +213,11 @@ export class Monitoring {
   }
 
   private startIntervalTimeslot() {
-    if (this.intervalTimeslot) clearInterval(this.intervalTimeslot);
-    console.log('Подготовка к запуску тайм-слот мониторинга');
+    if (this.intervalTimeslot) {
+      clearInterval(this.intervalTimeslot);
+      this.intervalTimeslot = null;
+    }
+    console.log('🟢 Интервал Timeslot запущен');
 
     this.intervalTimeslot = setInterval(async () => {
       try {
