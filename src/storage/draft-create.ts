@@ -172,11 +172,11 @@ export class Monitoring {
   private async startIntervalDraft() {
     if (this.intervalDraft) clearInterval(this.intervalDraft);
 
-    // await this.createDraft();
+    await this.createDraft();
 
-    // this.intervalDraft = setInterval(async () => {
-    //   await this.createDraft();
-    // }, 60_000 * 25);
+    this.intervalDraft = setInterval(async () => {
+      await this.createDraft();
+    }, 60_000 * 25);
   }
 
   private async createDraft() {
